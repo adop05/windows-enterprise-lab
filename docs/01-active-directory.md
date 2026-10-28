@@ -467,7 +467,7 @@ The password reset was completed successfully, and Active Directory reflected th
 
 ---
 
-## Excercise 02 — Active Directory Account Lockout
+## Exercise 02 — Active Directory Account Lockout
 
 ### Scenario
 
@@ -588,3 +588,133 @@ After unlocking the account, the employee successfully signed in to WIN11-01 usi
 ### Outcome
 
 The account lockout was successfully reproduced, investigated, and resolved.
+
+---
+
+## Exercise 03 — Employee Account Deactivation and Reactivation
+
+### Scenario
+
+An employee was leaving the organization, and IT received a request to deactivate their Active Directory account.
+
+The objective was to disable the account, verify that new domain authentication was blocked, inspect the associated Windows Security event, and restore access following a simulated reactivation request.
+
+### Disabling the Employee Account
+
+On DC01, Active Directory Users and Computers was used to locate John Smith under the `Employees` organizational unit.
+
+The **Disable Account** action was selected.
+
+![Disable Employee Account](../screenshots/disable-account.png)
+
+The account status was verified using PowerShell:
+
+```powershell
+Get-ADUser jsmith
+```
+
+Output:
+
+```text
+Name    : John Smith
+Enabled : False
+```
+
+![Disabled Account Verification](../screenshots/disable-account-validation-ps.png)
+
+This confirmed that the Active Directory account had been disabled.
+
+### Verifying Authentication Restrictions
+
+Initially, WIN11-01 still had an active Windows session under `CORP\jsmith` despite the account being disabled.
+
+This required distinguishing between an existing Windows session, cached credentials, and fresh domain authentication.
+
+After a subsequent sign-in test, Windows displayed:
+
+```text
+Your account has been disabled. Please see your system administrator.
+```
+
+![Disabled Account Sign-In](../screenshots/disable-account-validation.png)
+
+This demonstrated that the disabled account was prevented from establishing a new authenticated Windows session during the test.
+
+### Investigating the Security Event
+
+Windows Event Viewer was opened on DC01:
+
+```powershell
+eventvwr.msc
+```
+
+The Security log was inspected for Event ID `4725`, which records when an Active Directory user account is disabled.
+
+The following event was identified:
+
+| Event Attribute   | Value                       |
+| ----------------- | --------------------------- |
+| Event ID          | 4725                        |
+| Event Description | A user account was disabled |
+| Target Account    | jsmith                      |
+| Domain            | CORP                        |
+| Administrator     | CORP\Administrator          |
+| Domain Controller | DC01.corp.lab.test          |
+| Timestamp         | 10/28/2026 4:15:50 PM       |
+
+![Account Disabled Security Event](../screenshots/disable-account-event-viewer.png)
+
+The event established an audit trail identifying the affected account and the administrator who performed the deactivation.
+
+### Reactivating the Employee Account
+
+Following a simulated request to restore access, John Smith's account was re-enabled through Active Directory Users and Computers.
+
+The **Enable Account** action was selected.
+
+![Enable Employee Account](../screenshots/enable-account.png)
+
+The equivalent PowerShell command is:
+
+```powershell
+Enable-ADAccount -Identity jsmith
+```
+
+### Verifying Account Reactivation
+
+The account status was inspected again on DC01:
+
+```powershell
+Get-ADUser jsmith
+```
+
+Output:
+
+```text
+Name    : John Smith
+Enabled : True
+```
+
+![Enabled Account Verification](../screenshots/enable-account-validation-ps.png)
+
+The Windows Security log was also checked for Event ID `4722`, which records when a user account is enabled.
+
+The following event was identified:
+
+| Event Attribute   | Value                      |
+| ----------------- | -------------------------- |
+| Event ID          | 4722                       |
+| Event Description | A user account was enabled |
+| Target Account    | jsmith                     |
+| Domain            | CORP                       |
+| Administrator     | CORP\Administrator         |
+| Domain Controller | DC01.corp.lab.test         |
+| Timestamp         | 10/28/2026 4:24:21 PM      |
+
+![Account Enabled Security Event](../screenshots/enable-account-event-viewer.png)
+
+These results confirmed that the employee account was successfully re-enabled and that the administrative action was recorded in the Security log.
+
+### Outcome
+
+The account deactivation and reactivation procedures were completed successfully.
