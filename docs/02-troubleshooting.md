@@ -8,7 +8,7 @@ This document records infrastructure incidents encountered during the developmen
 
 # Incident 01 — Proxmox LVM-Thin Storage Exhaustion
 
-## 1. Problem Description
+## Problem Description
 
 During the installation and configuration of Windows 11 Enterprise on Proxmox VM 113, the virtual machine encountered a storage-related failure.
 
@@ -19,7 +19,7 @@ During the installation and configuration of Windows 11 Enterprise on Proxmox VM
 - The VM appeared to be running, but QEMU had paused execution.
 - Graceful shutdown attempts failed.
 
-## 2. Initial Investigation
+## Initial Investigation
 
 The following commands were executed on the Proxmox host to diagnose the storage failure.
 
@@ -65,7 +65,7 @@ pve    237.47g    14.00g
 
 The volume group contained 14 GiB of unallocated space that could be used to expand the thin pool.
 
-## 3. Root Cause
+## Root Cause
 
 Proxmox uses LVM-thin storage to allocate virtual disks.
 
@@ -75,7 +75,7 @@ During Windows 11 installation and updates, additional disk writes exhausted the
 
 Although the virtual disk could still have free space inside Windows, the underlying Proxmox storage pool could no longer allocate additional physical blocks, causing the QEMU I/O error.
 
-## 4. Remediation — Expand LVM-Thin Storage
+## Remediation — Expand LVM-Thin Storage
 
 The available space in the `pve` volume group was used to expand the thin pool.
 
@@ -98,7 +98,7 @@ However, the pool remained above 90% utilization and subsequently reached 100% a
 
 Further storage reclamation was necessary.
 
-## 5. Remediation — Migrate the Splunk VM Disk
+## Remediation — Migrate the Splunk VM Disk
 
 An existing Splunk VM had a virtual disk stored on `local-lvm`.
 
@@ -157,7 +157,7 @@ Approximately **15.5 GiB** of thin-pool allocation was reclaimed.
 
 Because both storage backends resided on the same physical drive, this operation redistributed storage usage rather than increasing total physical capacity.
 
-## 6. Remediation — Retire Redundant Windows Server VM
+## Remediation — Retire Redundant Windows Server VM
 
 Two Windows Server virtual machines had been created during lab preparation.
 
@@ -171,7 +171,7 @@ Neither had an established Active Directory configuration at the time, so the re
 
 Approximately **11.4 GiB** of allocated storage was reclaimed.
 
-## 7. Remediation — TRIM and Discard Operations
+## Remediation — TRIM and Discard Operations
 
 To reclaim additional storage without removing more systems, TRIM/discard operations were performed on applicable VMs and LXC containers throughout the homelab.
 
@@ -288,7 +288,7 @@ Approximately **2.3 GiB** of additional thin-pool allocation was reclaimed.
 
 This demonstrated that successful filesystem-level TRIM reporting does not guarantee that the underlying virtualization storage has released physical blocks.
 
-## 8. Final Recorded Storage Audit
+## Final Recorded Storage Audit
 
 After the storage expansion, disk migration, redundant VM removal, and TRIM operations, the most recent comprehensive Proxmox audit showed:
 

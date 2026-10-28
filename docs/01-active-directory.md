@@ -1,10 +1,10 @@
-# 01 — Active Directory Deployment and Administration
+# Active Directory Deployment and Administration
 
 ## Overview
 
 This document covers the deployment and configuration of a Windows enterprise environment using Windows Server 2022 and Windows 11 Enterprise.
 
-## 1. Infrastructure
+## Infrastructure
 
 ### Virtual Machines
 
@@ -26,7 +26,7 @@ This document covers the deployment and configuration of a Windows enterprise en
 | NetBIOS Domain             | CORP          |
 | Workstation                | WIN11-01      |
 
-## 2. Windows Server Deployment
+## Windows Server Deployment
 
 Windows Server 2022 was deployed as a virtual machine within Proxmox.
 
@@ -44,7 +44,7 @@ Windows Server 2022 was deployed as a virtual machine within Proxmox.
 | Network Bridge  | vmbr1         |
 | TPM             | 2.0           |
 
-## 3. Configuring the Server Hostname
+## Configuring the Server Hostname
 
 The Windows Server hostname was changed to `DC01`.
 
@@ -66,7 +66,7 @@ DC01
 
 This establishes a recognizable server identity for the domain controller.
 
-## 4. Configuring Static IP Addressing
+## Configuring Static IP
 
 ### Static IP Configuration
 
@@ -102,31 +102,23 @@ ipconfig /all
 
 The output confirmed that DC01 had the expected hostname, static address, default gateway, and DNS configuration.
 
-## 5. Active Directory DNS
+## Active Directory DNS
 
 Active Directory depends on DNS to locate domain controllers and authentication services.
 
 Domain members use DNS service records to locate resources.
 
-For example:
+### DNS Configuration
 
-```text
-_ldap._tcp.dc._msdcs.corp.lab.test
-```
-
-This DNS SRV record allows clients to discover domain controllers.
-
-### **\_\_**
-
-DC01 is intended to host the DNS zone for `corp.lab.test`.
+DC01 hosts the DNS zone for `corp.lab.test`.
 
 Its DNS client points to `10.0.0.100` so the server can query its own Active Directory DNS service.
 
 Public DNS requests can be forwarded to pfSense at `10.0.0.1`.
 
-## 6. Installing Active Directory Domain Services
+## Installing Active Directory Domain Services
 
-The following deployment commands should be verified against the current server state before execution.
+The following commands document the installation and domain creation procedure.
 
 ### Check Existing Installation
 
@@ -142,8 +134,6 @@ Get-Service NTDS,DNS -ErrorAction SilentlyContinue
 
 ### Install AD DS
 
-If not already installed:
-
 ```powershell
 Install-WindowsFeature AD-Domain-Services -IncludeManagementTools
 ```
@@ -152,60 +142,59 @@ This installs Active Directory Domain Services and its administrative tools.
 
 ### Create the Active Directory Forest
 
-If the server has not already been promoted:
-
 ```powershell
 Install-ADDSForest -DomainName "corp.lab.test" -DomainNetbiosName "CORP" -InstallDNS
 ```
 
 This creates the Active Directory forest and configures DNS.
 
-## 7. Verifying Active Directory
+## Verifying Active Directory
 
-After promotion, verify the domain:
+After promotion, the domain was verified using:
 
 ```powershell
-Get-ADDomain
+Get-ADDomain | Select-Object DNSRoot,NetBIOSName,PDCEmulator
 ```
 
-Check services:
+The output confirmed:
+
+```text
+DNSRoot       NetBIOSName PDCEmulator
+-------       ----------- -----------
+corp.lab.test CORP        DC01.corp.lab.test
+```
+
+The Active Directory and DNS services were checked:
 
 ```powershell
 Get-Service NTDS,DNS
 ```
 
-Expected status:
+Both services reported `Running`.
 
-```text
-NTDS    Running
-DNS     Running
-```
-
-Verify DC01's DNS record:
-
-```powershell
-Resolve-DnsName dc01.corp.lab.test
-```
-
-Verify Active Directory SRV records:
+Active Directory DNS resolution was verified:
 
 ```powershell
 Resolve-DnsName -Type SRV _ldap._tcp.dc._msdcs.corp.lab.test
 ```
 
-Configure pfSense as an upstream DNS forwarder if needed:
+The SRV record identified `dc01.corp.lab.test` on port 389 and resolved the server to `10.0.0.100`.
+
+![Active Directory Domain Verification](../screenshots/ad-domain-verification.png)
+
+An upstream DNS forwarder can be configured if needed:
 
 ```powershell
 Set-DnsServerForwarder -IPAddress 10.0.0.1
 ```
 
-Test external DNS resolution:
+External DNS resolution can be tested using:
 
 ```powershell
 Resolve-DnsName microsoft.com
 ```
 
-## 8. Windows 11 Enterprise Deployment
+## Windows 11 Enterprise Deployment
 
 ### VM Configuration
 
@@ -223,7 +212,7 @@ Resolve-DnsName microsoft.com
 
 Windows 11 was installed using an ISO image.
 
-The virtual machine uses a 50 GiB disk, which is below Windows 11's commonly specified 64 GB minimum storage requirement. The virtual disk should be expanded when sufficient host storage becomes available.
+The virtual machine uses a 50 GiB disk, which is below Windows 11's commonly specified 64 GB minimum storage requirement.
 
 ### VirtIO and QEMU Guest Agent
 
@@ -241,7 +230,9 @@ Communication was tested from the Proxmox host:
 qm guest cmd 113 ping
 ```
 
-## 9. Joining Windows 11 to Active Directory
+## Joining Windows 11 to Active Directory
+
+WIN11-01 was configured to use DC01 as its DNS server before joining the `corp.lab.test` domain.
 
 ### Configure DNS
 
@@ -251,48 +242,349 @@ On WIN11-01:
 Set-DnsClientServerAddress -InterfaceAlias "Ethernet" -ServerAddresses 10.0.0.100
 ```
 
-Verify network configuration:
+The workstation's network configuration was verified using:
 
 ```powershell
 ipconfig /all
 ```
 
-Test DNS resolution:
-
-```powershell
-Resolve-DnsName -Type SRV _ldap._tcp.dc._msdcs.corp.lab.test
-```
-
-Test LDAP connectivity:
-
-```powershell
-Test-NetConnection 10.0.0.100 -Port 389
-```
+| Setting         | Value         |
+| --------------- | ------------- |
+| IPv4 Address    | 10.0.0.18     |
+| Subnet Mask     | 255.255.255.0 |
+| Default Gateway | 10.0.0.1      |
+| DNS Server      | 10.0.0.100    |
+| DHCP            | Enabled       |
 
 ### Join the Domain
+
+The following command was used to join WIN11-01 to Active Directory:
 
 ```powershell
 Add-Computer -DomainName "corp.lab.test" -Credential (Get-Credential) -Restart
 ```
 
-Use an account authorized to join computers to the domain.
+Domain administrator credentials were supplied to authorize the operation.
 
-After restarting, verify:
+After restarting, domain membership was verified:
 
 ```powershell
 Get-CimInstance Win32_ComputerSystem | Select-Object Name,Domain,PartOfDomain
 ```
 
-Then:
+Output:
+
+```text
+Name       Domain          PartOfDomain
+----       ------          ------------
+WIN11-01   corp.lab.test   True
+```
+
+The domain administrator account was also verified:
+
+```powershell
+whoami
+```
+
+Output:
+
+```text
+corp\administrator
+```
+
+## Verifying Domain Connectivity
+
+After joining the domain, additional checks were performed to verify communication between WIN11-01 and DC01.
+
+### Secure Channel Verification
+
+The initial PowerShell secure-channel test returned `False`:
 
 ```powershell
 Test-ComputerSecureChannel
 ```
 
-Expected:
+Further investigation was performed using:
+
+```powershell
+nltest /sc_verify:corp.lab.test
+```
+
+Results:
+
+```text
+Trusted DC Connection Status Status = 0 0x0 NERR_Success
+Trust Verification Status = 0 0x0 NERR_Success
+```
+
+A subsequent verbose PowerShell verification succeeded:
+
+```powershell
+Test-ComputerSecureChannel -Verbose
+```
+
+Output:
 
 ```text
 True
+VERBOSE: The secure channel between the local computer and the domain corp.lab.test is in good condition.
 ```
 
-This verifies that the workstation's secure channel to the domain is functioning.
+![Domain Trust Verification](../screenshots/domain-trust-verification.png)
+
+### Network Connectivity
+
+SMB connectivity to the domain controller was tested:
+
+```powershell
+Test-NetConnection 10.0.0.100 -Port 445
+```
+
+Result:
+
+```text
+TcpTestSucceeded : True
+```
+
+### Time Synchronization
+
+```powershell
+w32tm /query /status
+```
+
+The workstation reported:
+
+```text
+Source: DC01.corp.lab.test
+Leap Indicator: 0 (no warning)
+```
+
+This confirmed that WIN11-01 was synchronizing time with the domain controller.
+
+## Active Directory User Administration
+
+### Creating an Organizational Unit
+
+Active Directory Users and Computers was opened on DC01:
+
+```powershell
+dsa.msc
+```
+
+An organizational unit named `Employees` was created under the `corp.lab.test` domain.
+
+### Creating an Employee Account
+
+A test employee account was created within the Employees OU.
+
+| Attribute           | Value                |
+| ------------------- | -------------------- |
+| First Name          | John                 |
+| Last Name           | Smith                |
+| Username            | jsmith               |
+| User Principal Name | jsmith@corp.lab.test |
+| Domain Logon        | CORP\jsmith          |
+| Organizational Unit | Employees            |
+
+### Verifying Employee Authentication
+
+WIN11-01 was accessed using the employee account.
+
+PowerShell was used to verify the authenticated identity:
+
+```powershell
+whoami
+```
+
+Output:
+
+```text
+corp\jsmith
+```
+
+![Employee Authentication](../screenshots/employee-authentication.png)
+
+This confirmed that the employee account could successfully authenticate and sign in to the domain-joined Windows 11 workstation.
+
+---
+
+## Exercise 01 — Employee Password Reset
+
+### Scenario
+
+An employee reported that they had forgotten their Windows password and could no longer access their workstation.
+
+The objective was to reset the employee's password centrally through Active Directory.
+
+### Investigation
+
+On DC01, the employee account was inspected using PowerShell:
+
+```powershell
+Get-ADUser jsmith -Properties Enabled,LockedOut,PasswordExpired,PasswordLastSet
+```
+
+The account was confirmed to be enabled and not locked out.
+
+### Resolution
+
+Active Directory Users and Computers was opened on DC01.
+
+The employee account was located under:
+
+```text
+corp.lab.test
+└── Employees
+    └── John Smith
+```
+
+The **Reset Password** action was used to assign a new password.
+
+### Verification
+
+The account status was checked again:
+
+```powershell
+Get-ADUser jsmith -Properties Enabled,LockedOut,PasswordExpired,PasswordLastSet |
+    Select-Object Name,Enabled,LockedOut,PasswordExpired,PasswordLastSet
+```
+
+The resulting account properties showed:
+
+```text
+Name            : John Smith
+Enabled         : True
+LockedOut       : False
+PasswordExpired : False
+PasswordLastSet : 10/28/2026 2:23:07 PM
+```
+
+![Employee Password Reset Verification](../screenshots/employee-password-reset.png)
+
+### Outcome
+
+The password reset was completed successfully, and Active Directory reflected the updated password timestamp.
+
+---
+
+## Excercise 02 — Active Directory Account Lockout
+
+### Scenario
+
+An employee repeatedly entered an incorrect password while attempting to sign in to WIN11-01.
+
+The objective was to reproduce an account lockout, identify the affected account, and restore access using Active Directory.
+
+### Configuring the Account Lockout Policy
+
+Group Policy Management was opened on DC01:
+
+```powershell
+gpmc.msc
+```
+
+The account lockout policy was configured under:
+
+```text
+Default Domain Policy
+└── Computer Configuration
+    └── Policies
+        └── Windows Settings
+            └── Security Settings
+                └── Account Policies
+                    └── Account Lockout
+```
+
+The following settings were applied:
+
+| Policy                              | Configuration            |
+| ----------------------------------- | ------------------------ |
+| Account lockout threshold           | 3 invalid logon attempts |
+| Account lockout duration            | 30 minutes               |
+| Reset account lockout counter after | 30 minutes               |
+| Allow Administrator account lockout | Enabled                  |
+
+![Domain Account Lockout Policy](../screenshots/domain-lockout-policy.png)
+
+### Reproducing the Lockout
+
+Multiple incorrect password attempts were made using the `CORP\jsmith` account on WIN11-01.
+
+Windows subsequently displayed:
+
+```text
+The referenced account is currently locked out and may not be logged on to.
+```
+
+![Employee Account Locked](../screenshots/account-lock.png)
+
+This confirmed that the configured account lockout behavior was functioning.
+
+### Investigating the Account
+
+On DC01, Active Directory Users and Computers was used to inspect the employee account.
+
+The Account tab indicated:
+
+```text
+Unlock account. This account is currently locked out on this Active Directory Domain Controller.
+```
+
+The account could also be inspected through PowerShell:
+
+```powershell
+Get-ADUser jsmith -Properties LockedOut,BadPwdCount,LastBadPasswordAttempt |
+    Select-Object Name,LockedOut,BadPwdCount,LastBadPasswordAttempt
+```
+
+### Investigating the Security Event
+
+Windows Event Viewer was opened on DC01:
+
+```powershell
+eventvwr.msc
+```
+
+The Security log was inspected for Event ID `4740`, which records account lockout events.
+
+An event associated with the employee account was identified.
+
+| Event Attribute         | Value                 |
+| ----------------------- | --------------------- |
+| Event ID                | 4740                  |
+| Target Account          | jsmith                |
+| Originating Workstation | WIN11-01              |
+| Domain                  | CORP                  |
+| Timestamp               | 10/28/2026 5:22:09 PM |
+
+![Event Viewer Account Lockout](../screenshots/event-viewer-lockout.png)
+
+The event provided evidence of the lockout and identified the workstation associated with the failed authentication attempts.
+
+### Resolution
+
+The employee account was unlocked through Active Directory Users and Computers.
+
+On the Account tab, the following option was selected:
+
+```text
+Unlock account.
+```
+
+The change was then applied.
+
+![Active Directory Account Unlock](../screenshots/account-unlock.png)
+
+The equivalent PowerShell command for unlocking the account is:
+
+```powershell
+Unlock-ADAccount -Identity jsmith
+```
+
+### Verification
+
+After unlocking the account, the employee successfully signed in to WIN11-01 using the correct password.
+
+### Outcome
+
+The account lockout was successfully reproduced, investigated, and resolved.
