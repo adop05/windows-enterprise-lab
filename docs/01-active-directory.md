@@ -2,33 +2,35 @@
 
 ## Overview
 
-This document covers the deployment and configuration of a Windows enterprise environment using Windows Server 2022 and Windows 11 Enterprise.
+Windows enterprise administration lab deployed on Proxmox VE using Windows Server 2022, Windows 11 Enterprise, and pfSense.
+
+The environment supports Active Directory administration, centralized authentication, Group Policy, and IT support troubleshooting.
 
 ## Infrastructure
 
 ### Virtual Machines
 
-| Machine  | Operating System      | Role               |
-| -------- | --------------------- | ------------------ |
-| DC01     | Windows Server 2022   | Domain Controller  |
-| WIN11-01 | Windows 11 Enterprise | Domain Workstation |
-| pfSense  | pfSense               | Gateway and DHCP   |
+| Machine  | Operating System      | Role                                       |
+| -------- | --------------------- | ------------------------------------------ |
+| DC01     | Windows Server 2022   | Active Directory Domain Controller and DNS |
+| WIN11-01 | Windows 11 Enterprise | Domain-joined workstation                  |
+| pfSense  | pfSense               | Gateway and DHCP                           |
 
 ### Network Configuration
 
-| Setting                    | Value         |
-| -------------------------- | ------------- |
-| Network                    | 10.0.0.0/24   |
-| Gateway                    | 10.0.0.1      |
-| Domain Controller IP       | 10.0.0.100    |
-| Domain Controller Hostname | DC01          |
-| Target Domain              | corp.lab.test |
-| NetBIOS Domain             | CORP          |
-| Workstation                | WIN11-01      |
+| Setting              | Value           |
+| -------------------- | --------------- |
+| Network              | `10.0.0.0/24`   |
+| Gateway              | `10.0.0.1`      |
+| Domain Controller    | `DC01`          |
+| Domain Controller IP | `10.0.0.100`    |
+| AD Domain            | `corp.lab.test` |
+| NetBIOS Name         | `CORP`          |
+| Workstation          | `WIN11-01`      |
 
 ## Windows Server Deployment
 
-Windows Server 2022 was deployed as a virtual machine within Proxmox.
+Windows Server 2022 was deployed on Proxmox VE.
 
 ### VM Configuration
 
@@ -44,155 +46,81 @@ Windows Server 2022 was deployed as a virtual machine within Proxmox.
 | Network Bridge  | vmbr1         |
 | TPM             | 2.0           |
 
-## Configuring the Server Hostname
-
-The Windows Server hostname was changed to `DC01`.
+### Hostname Configuration
 
 ```powershell
 Rename-Computer -NewName "DC01" -Restart
-```
-
-After restarting, the hostname was verified:
-
-```powershell
 hostname
 ```
 
-Expected output:
-
-```text
-DC01
-```
-
-This establishes a recognizable server identity for the domain controller.
-
-## Configuring Static IP
+The server hostname was configured as `DC01`.
 
 ### Static IP Configuration
 
-A domain controller should maintain a consistent network address so clients can reliably locate Active Directory DNS and authentication services.
+DC01 uses a static address to ensure that domain clients can consistently locate Active Directory and DNS services.
 
-DC01 was configured with the following settings:
-
-| Setting         | Value         |
-| --------------- | ------------- |
-| IP Address      | 10.0.0.100    |
-| Subnet Mask     | 255.255.255.0 |
-| Default Gateway | 10.0.0.1      |
-| Preferred DNS   | 10.0.0.100    |
-| DHCP            | Disabled      |
-
-The network address was configured using:
+| Setting         | Value           |
+| --------------- | --------------- |
+| IP Address      | `10.0.0.100`    |
+| Subnet Mask     | `255.255.255.0` |
+| Default Gateway | `10.0.0.1`      |
+| Preferred DNS   | `10.0.0.100`    |
+| DHCP            | Disabled        |
 
 ```powershell
 netsh interface ipv4 set address name="Ethernet" static 10.0.0.100 255.255.255.0 10.0.0.1
-```
 
-The DNS client configuration was updated:
-
-```powershell
 Set-DnsClientServerAddress -InterfaceAlias "Ethernet" -ServerAddresses 10.0.0.100
-```
 
-Configuration was verified using:
-
-```powershell
 ipconfig /all
 ```
 
-The output confirmed that DC01 had the expected hostname, static address, default gateway, and DNS configuration.
+### Active Directory and DNS Installation
 
-## Active Directory DNS
-
-Active Directory depends on DNS to locate domain controllers and authentication services.
-
-Domain members use DNS service records to locate resources.
-
-### DNS Configuration
-
-DC01 hosts the DNS zone for `corp.lab.test`.
-
-Its DNS client points to `10.0.0.100` so the server can query its own Active Directory DNS service.
-
-Public DNS requests can be forwarded to pfSense at `10.0.0.1`.
-
-## Installing Active Directory Domain Services
-
-The following commands document the installation and domain creation procedure.
-
-### Check Existing Installation
-
-```powershell
-Get-WindowsFeature AD-Domain-Services
-```
-
-Check for existing services:
-
-```powershell
-Get-Service NTDS,DNS -ErrorAction SilentlyContinue
-```
-
-### Install AD DS
+Active Directory Domain Services and management tools were installed:
 
 ```powershell
 Install-WindowsFeature AD-Domain-Services -IncludeManagementTools
 ```
 
-This installs Active Directory Domain Services and its administrative tools.
-
-### Create the Active Directory Forest
+The Active Directory forest was created with integrated DNS:
 
 ```powershell
 Install-ADDSForest -DomainName "corp.lab.test" -DomainNetbiosName "CORP" -InstallDNS
 ```
 
-This creates the Active Directory forest and configures DNS.
+DC01 hosts the DNS zone for `corp.lab.test`. Active Directory uses DNS service records to help clients locate domain controllers and authentication services.
 
-## Verifying Active Directory
-
-After promotion, the domain was verified using:
-
-```powershell
-Get-ADDomain | Select-Object DNSRoot,NetBIOSName,PDCEmulator
-```
-
-The output confirmed:
-
-```text
-DNSRoot       NetBIOSName PDCEmulator
--------       ----------- -----------
-corp.lab.test CORP        DC01.corp.lab.test
-```
-
-The Active Directory and DNS services were checked:
-
-```powershell
-Get-Service NTDS,DNS
-```
-
-Both services reported `Running`.
-
-Active Directory DNS resolution was verified:
-
-```powershell
-Resolve-DnsName -Type SRV _ldap._tcp.dc._msdcs.corp.lab.test
-```
-
-The SRV record identified `dc01.corp.lab.test` on port 389 and resolved the server to `10.0.0.100`.
-
-![Active Directory Domain Verification](../screenshots/ad-domain-verification.png)
-
-An upstream DNS forwarder can be configured if needed:
+An upstream DNS forwarder can be configured for external resolution:
 
 ```powershell
 Set-DnsServerForwarder -IPAddress 10.0.0.1
 ```
 
-External DNS resolution can be tested using:
+### Domain Verification
 
 ```powershell
-Resolve-DnsName microsoft.com
+Get-ADDomain | Select-Object DNSRoot,NetBIOSName,PDCEmulator
+
+Get-Service NTDS,DNS
+
+Resolve-DnsName -Type SRV _ldap._tcp.dc._msdcs.corp.lab.test
 ```
+
+Verified results:
+
+| Check           | Result               |
+| --------------- | -------------------- |
+| DNS Root        | `corp.lab.test`      |
+| NetBIOS Name    | `CORP`               |
+| PDC Emulator    | `DC01.corp.lab.test` |
+| NTDS Service    | Running              |
+| DNS Service     | Running              |
+| LDAP SRV Target | `dc01.corp.lab.test` |
+| LDAP Port       | 389                  |
+| DC01 Address    | `10.0.0.100`         |
+
+![Active Directory Domain Verification](../screenshots/ad-domain-verification.png)
 
 ## Windows 11 Enterprise Deployment
 
@@ -207,72 +135,48 @@ Resolve-DnsName microsoft.com
 | Memory           | 4 GiB                 |
 | Virtual Disk     | 50 GiB SATA           |
 | TPM              | 2.0                   |
-| Network          | vmbr1                 |
+| Network Bridge   | vmbr1                 |
 | Network Adapter  | Intel E1000           |
 
-Windows 11 was installed using an ISO image.
-
-The virtual machine uses a 50 GiB disk, which is below Windows 11's commonly specified 64 GB minimum storage requirement.
+Windows 11 was installed from an ISO image. The 50 GiB virtual disk is below Microsoft's 64 GB minimum storage requirement and should be expanded when capacity permits.
 
 ### VirtIO and QEMU Guest Agent
 
-After installing Windows, VirtIO guest tools were installed.
-
-The QEMU Guest Agent was enabled in Proxmox:
+VirtIO guest tools were installed, and the QEMU Guest Agent was enabled and tested from Proxmox:
 
 ```bash
 qm set 113 --agent enabled=1
-```
-
-Communication was tested from the Proxmox host:
-
-```bash
 qm guest cmd 113 ping
 ```
 
-## Joining Windows 11 to Active Directory
+### Domain Join
 
-WIN11-01 was configured to use DC01 as its DNS server before joining the `corp.lab.test` domain.
-
-### Configure DNS
-
-On WIN11-01:
+WIN11-01 was configured to use DC01 for DNS while retaining DHCP for IP addressing.
 
 ```powershell
 Set-DnsClientServerAddress -InterfaceAlias "Ethernet" -ServerAddresses 10.0.0.100
 ```
 
-The workstation's network configuration was verified using:
+| Setting         | Value           |
+| --------------- | --------------- |
+| IPv4 Address    | `10.0.0.18`     |
+| Subnet Mask     | `255.255.255.0` |
+| Default Gateway | `10.0.0.1`      |
+| DNS Server      | `10.0.0.100`    |
+| DHCP            | Enabled         |
 
-```powershell
-ipconfig /all
-```
-
-| Setting         | Value         |
-| --------------- | ------------- |
-| IPv4 Address    | 10.0.0.18     |
-| Subnet Mask     | 255.255.255.0 |
-| Default Gateway | 10.0.0.1      |
-| DNS Server      | 10.0.0.100    |
-| DHCP            | Enabled       |
-
-### Join the Domain
-
-The following command was used to join WIN11-01 to Active Directory:
+The workstation was joined using domain administrator credentials:
 
 ```powershell
 Add-Computer -DomainName "corp.lab.test" -Credential (Get-Credential) -Restart
 ```
 
-Domain administrator credentials were supplied to authorize the operation.
-
-After restarting, domain membership was verified:
+Domain membership was verified:
 
 ```powershell
-Get-CimInstance Win32_ComputerSystem | Select-Object Name,Domain,PartOfDomain
+Get-CimInstance Win32_ComputerSystem |
+    Select-Object Name,Domain,PartOfDomain
 ```
-
-Output:
 
 ```text
 Name       Domain          PartOfDomain
@@ -280,123 +184,66 @@ Name       Domain          PartOfDomain
 WIN11-01   corp.lab.test   True
 ```
 
-The domain administrator account was also verified:
+### Domain Connectivity Verification
 
-```powershell
-whoami
-```
-
-Output:
-
-```text
-corp\administrator
-```
-
-## Verifying Domain Connectivity
-
-After joining the domain, additional checks were performed to verify communication between WIN11-01 and DC01.
-
-### Secure Channel Verification
-
-The initial PowerShell secure-channel test returned `False`:
-
-```powershell
-Test-ComputerSecureChannel
-```
-
-Further investigation was performed using:
+The initial `Test-ComputerSecureChannel` command returned `False`. Additional diagnostics found no trust failure.
 
 ```powershell
 nltest /sc_verify:corp.lab.test
+Test-ComputerSecureChannel -Verbose
 ```
 
 Results:
 
 ```text
-Trusted DC Connection Status Status = 0 0x0 NERR_Success
 Trust Verification Status = 0 0x0 NERR_Success
-```
-
-A subsequent verbose PowerShell verification succeeded:
-
-```powershell
-Test-ComputerSecureChannel -Verbose
-```
-
-Output:
-
-```text
 True
-VERBOSE: The secure channel between the local computer and the domain corp.lab.test is in good condition.
 ```
 
 ![Domain Trust Verification](../screenshots/domain-trust-verification.png)
 
-### Network Connectivity
-
-SMB connectivity to the domain controller was tested:
+SMB connectivity was verified:
 
 ```powershell
 Test-NetConnection 10.0.0.100 -Port 445
 ```
 
-Result:
-
 ```text
 TcpTestSucceeded : True
 ```
 
-### Time Synchronization
+Time synchronization was checked:
 
 ```powershell
 w32tm /query /status
 ```
-
-The workstation reported:
 
 ```text
 Source: DC01.corp.lab.test
 Leap Indicator: 0 (no warning)
 ```
 
-This confirmed that WIN11-01 was synchronizing time with the domain controller.
+No secure-channel repair was required.
 
 ## Active Directory User Administration
 
-### Creating an Organizational Unit
+An `Employees` organizational unit was created under `corp.lab.test` using Active Directory Users and Computers (`dsa.msc`).
 
-Active Directory Users and Computers was opened on DC01:
+A test employee account was created:
 
-```powershell
-dsa.msc
-```
+| Attribute           | Value                  |
+| ------------------- | ---------------------- |
+| Name                | John Smith             |
+| Username            | `jsmith`               |
+| User Principal Name | `jsmith@corp.lab.test` |
+| Domain Logon        | `CORP\jsmith`          |
+| Organizational Unit | Employees              |
 
-An organizational unit named `Employees` was created under the `corp.lab.test` domain.
-
-### Creating an Employee Account
-
-A test employee account was created within the Employees OU.
-
-| Attribute           | Value                |
-| ------------------- | -------------------- |
-| First Name          | John                 |
-| Last Name           | Smith                |
-| Username            | jsmith               |
-| User Principal Name | jsmith@corp.lab.test |
-| Domain Logon        | CORP\jsmith          |
-| Organizational Unit | Employees            |
-
-### Verifying Employee Authentication
-
-WIN11-01 was accessed using the employee account.
-
-PowerShell was used to verify the authenticated identity:
+The account was used to sign in to WIN11-01.
 
 ```powershell
 whoami
 ```
-
-Output:
 
 ```text
 corp\jsmith
@@ -404,52 +251,38 @@ corp\jsmith
 
 ![Employee Authentication](../screenshots/employee-authentication.png)
 
-This confirmed that the employee account could successfully authenticate and sign in to the domain-joined Windows 11 workstation.
-
 ---
 
 ## Exercise 01 — Employee Password Reset
 
 ### Scenario
 
-An employee reported that they had forgotten their Windows password and could no longer access their workstation.
-
-The objective was to reset the employee's password centrally through Active Directory.
+John Smith forgot his Windows password and requested an account reset.
 
 ### Investigation
 
-On DC01, the employee account was inspected using PowerShell:
+On DC01, account status was inspected using:
 
 ```powershell
 Get-ADUser jsmith -Properties Enabled,LockedOut,PasswordExpired,PasswordLastSet
 ```
 
-The account was confirmed to be enabled and not locked out.
+The account was enabled and not locked.
 
 ### Resolution
 
-Active Directory Users and Computers was opened on DC01.
+In Active Directory Users and Computers:
 
-The employee account was located under:
+`corp.lab.test → Employees → John Smith → Reset Password`
 
-```text
-corp.lab.test
-└── Employees
-    └── John Smith
-```
-
-The **Reset Password** action was used to assign a new password.
+A new password was assigned.
 
 ### Verification
-
-The account status was checked again:
 
 ```powershell
 Get-ADUser jsmith -Properties Enabled,LockedOut,PasswordExpired,PasswordLastSet |
     Select-Object Name,Enabled,LockedOut,PasswordExpired,PasswordLastSet
 ```
-
-The resulting account properties showed:
 
 ```text
 Name            : John Smith
@@ -461,56 +294,34 @@ PasswordLastSet : 10/28/2026 2:23:07 PM
 
 ![Employee Password Reset Verification](../screenshots/employee-password-reset.png)
 
-### Outcome
-
-The password reset was completed successfully, and Active Directory reflected the updated password timestamp.
-
 ---
 
 ## Exercise 02 — Active Directory Account Lockout
 
 ### Scenario
 
-An employee repeatedly entered an incorrect password while attempting to sign in to WIN11-01.
+Repeated incorrect password attempts caused John Smith's domain account to become locked.
 
-The objective was to reproduce an account lockout, identify the affected account, and restore access using Active Directory.
+### Lockout Policy Configuration
 
-### Configuring the Account Lockout Policy
+The Default Domain Policy was configured through Group Policy Management (`gpmc.msc`):
 
-Group Policy Management was opened on DC01:
+`Computer Configuration → Policies → Windows Settings → Security Settings → Account Policies → Account Lockout Policy`
 
-```powershell
-gpmc.msc
-```
-
-The account lockout policy was configured under:
-
-```text
-Default Domain Policy
-└── Computer Configuration
-    └── Policies
-        └── Windows Settings
-            └── Security Settings
-                └── Account Policies
-                    └── Account Lockout
-```
-
-The following settings were applied:
-
-| Policy                              | Configuration            |
-| ----------------------------------- | ------------------------ |
-| Account lockout threshold           | 3 invalid logon attempts |
-| Account lockout duration            | 30 minutes               |
-| Reset account lockout counter after | 30 minutes               |
-| Allow Administrator account lockout | Enabled                  |
+| Policy                        | Configuration            |
+| ----------------------------- | ------------------------ |
+| Lockout Threshold             | 3 invalid logon attempts |
+| Lockout Duration              | 30 minutes               |
+| Reset Counter After           | 30 minutes               |
+| Administrator Account Lockout | Enabled                  |
 
 ![Domain Account Lockout Policy](../screenshots/domain-lockout-policy.png)
 
 ### Reproducing the Lockout
 
-Multiple incorrect password attempts were made using the `CORP\jsmith` account on WIN11-01.
+Incorrect passwords were entered for `CORP\jsmith` on WIN11-01.
 
-Windows subsequently displayed:
+Windows displayed:
 
 ```text
 The referenced account is currently locked out and may not be logged on to.
@@ -518,76 +329,40 @@ The referenced account is currently locked out and may not be logged on to.
 
 ![Employee Account Locked](../screenshots/account-lock.png)
 
-This confirmed that the configured account lockout behavior was functioning.
+### Investigation
 
-### Investigating the Account
-
-On DC01, Active Directory Users and Computers was used to inspect the employee account.
-
-The Account tab indicated:
-
-```text
-Unlock account. This account is currently locked out on this Active Directory Domain Controller.
-```
-
-The account could also be inspected through PowerShell:
+ADUC identified the account as locked. The following PowerShell command can also inspect the account state:
 
 ```powershell
 Get-ADUser jsmith -Properties LockedOut,BadPwdCount,LastBadPasswordAttempt |
     Select-Object Name,LockedOut,BadPwdCount,LastBadPasswordAttempt
 ```
 
-### Investigating the Security Event
+On DC01, Event Viewer (`eventvwr.msc`) recorded the lockout:
 
-Windows Event Viewer was opened on DC01:
-
-```powershell
-eventvwr.msc
-```
-
-The Security log was inspected for Event ID `4740`, which records account lockout events.
-
-An event associated with the employee account was identified.
-
-| Event Attribute         | Value                 |
+| Attribute               | Value                 |
 | ----------------------- | --------------------- |
 | Event ID                | 4740                  |
-| Target Account          | jsmith                |
-| Originating Workstation | WIN11-01              |
-| Domain                  | CORP                  |
+| Account                 | `jsmith`              |
+| Originating Workstation | `WIN11-01`            |
+| Domain                  | `CORP`                |
 | Timestamp               | 10/28/2026 5:22:09 PM |
 
 ![Event Viewer Account Lockout](../screenshots/event-viewer-lockout.png)
 
-The event provided evidence of the lockout and identified the workstation associated with the failed authentication attempts.
+### Resolution and Verification
 
-### Resolution
-
-The employee account was unlocked through Active Directory Users and Computers.
-
-On the Account tab, the following option was selected:
-
-```text
-Unlock account.
-```
-
-The change was then applied.
+The account was unlocked through ADUC.
 
 ![Active Directory Account Unlock](../screenshots/account-unlock.png)
 
-The equivalent PowerShell command for unlocking the account is:
+Equivalent PowerShell command:
 
 ```powershell
 Unlock-ADAccount -Identity jsmith
 ```
 
-### Verification
-
-After unlocking the account, the employee successfully signed in to WIN11-01 using the correct password.
-
-### Outcome
-
-The account lockout was successfully reproduced, investigated, and resolved.
+John successfully signed in to WIN11-01 using the correct password after the unlock.
 
 ---
 
@@ -595,42 +370,29 @@ The account lockout was successfully reproduced, investigated, and resolved.
 
 ### Scenario
 
-An employee was leaving the organization, and IT received a request to deactivate their Active Directory account.
+A simulated employee offboarding request required disabling John Smith's domain account. A subsequent reactivation request required restoring it.
 
-The objective was to disable the account, verify that new domain authentication was blocked, inspect the associated Windows Security event, and restore access following a simulated reactivation request.
+### Account Deactivation
 
-### Disabling the Employee Account
-
-On DC01, Active Directory Users and Computers was used to locate John Smith under the `Employees` organizational unit.
-
-The **Disable Account** action was selected.
+John's account was disabled using ADUC.
 
 ![Disable Employee Account](../screenshots/disable-account.png)
 
-The account status was verified using PowerShell:
+The state was verified on DC01:
 
 ```powershell
-Get-ADUser jsmith
+Get-ADUser jsmith | Select-Object Name,Enabled
 ```
 
-Output:
-
 ```text
-Name    : John Smith
-Enabled : False
+Name       Enabled
+----       -------
+John Smith False
 ```
 
 ![Disabled Account Verification](../screenshots/disable-account-validation-ps.png)
 
-This confirmed that the Active Directory account had been disabled.
-
-### Verifying Authentication Restrictions
-
-Initially, WIN11-01 still had an active Windows session under `CORP\jsmith` despite the account being disabled.
-
-This required distinguishing between an existing Windows session, cached credentials, and fresh domain authentication.
-
-After a subsequent sign-in test, Windows displayed:
+WIN11-01 initially still had a session under `CORP\jsmith`. A subsequent sign-in attempt was rejected:
 
 ```text
 Your account has been disabled. Please see your system administrator.
@@ -638,83 +400,213 @@ Your account has been disabled. Please see your system administrator.
 
 ![Disabled Account Sign-In](../screenshots/disable-account-validation.png)
 
-This demonstrated that the disabled account was prevented from establishing a new authenticated Windows session during the test.
+An existing Windows session does not automatically terminate when an AD account is disabled.
 
-### Investigating the Security Event
+### Security Event Verification
 
-Windows Event Viewer was opened on DC01:
+The domain controller's Security log recorded Event ID `4725`.
 
-```powershell
-eventvwr.msc
-```
-
-The Security log was inspected for Event ID `4725`, which records when an Active Directory user account is disabled.
-
-The following event was identified:
-
-| Event Attribute   | Value                       |
-| ----------------- | --------------------------- |
-| Event ID          | 4725                        |
-| Event Description | A user account was disabled |
-| Target Account    | jsmith                      |
-| Domain            | CORP                        |
-| Administrator     | CORP\Administrator          |
-| Domain Controller | DC01.corp.lab.test          |
-| Timestamp         | 10/28/2026 4:15:50 PM       |
+| Attribute      | Value                 |
+| -------------- | --------------------- |
+| Event ID       | 4725                  |
+| Action         | User account disabled |
+| Target Account | `CORP\jsmith`         |
+| Administrator  | `CORP\Administrator`  |
+| Timestamp      | 10/28/2026 4:15:50 PM |
 
 ![Account Disabled Security Event](../screenshots/disable-account-event-viewer.png)
 
-The event established an audit trail identifying the affected account and the administrator who performed the deactivation.
+### Account Reactivation
 
-### Reactivating the Employee Account
-
-Following a simulated request to restore access, John Smith's account was re-enabled through Active Directory Users and Computers.
-
-The **Enable Account** action was selected.
+John's account was re-enabled using ADUC.
 
 ![Enable Employee Account](../screenshots/enable-account.png)
 
-The equivalent PowerShell command is:
+Equivalent PowerShell command:
 
 ```powershell
 Enable-ADAccount -Identity jsmith
 ```
 
-### Verifying Account Reactivation
-
-The account status was inspected again on DC01:
-
-```powershell
-Get-ADUser jsmith
-```
-
-Output:
-
-```text
-Name    : John Smith
-Enabled : True
-```
+AD verification showed `Enabled: True`.
 
 ![Enabled Account Verification](../screenshots/enable-account-validation-ps.png)
 
-The Windows Security log was also checked for Event ID `4722`, which records when a user account is enabled.
+The Security log also recorded the reactivation:
 
-The following event was identified:
-
-| Event Attribute   | Value                      |
-| ----------------- | -------------------------- |
-| Event ID          | 4722                       |
-| Event Description | A user account was enabled |
-| Target Account    | jsmith                     |
-| Domain            | CORP                       |
-| Administrator     | CORP\Administrator         |
-| Domain Controller | DC01.corp.lab.test         |
-| Timestamp         | 10/28/2026 4:24:21 PM      |
+| Attribute      | Value                 |
+| -------------- | --------------------- |
+| Event ID       | 4722                  |
+| Action         | User account enabled  |
+| Target Account | `CORP\jsmith`         |
+| Administrator  | `CORP\Administrator`  |
+| Timestamp      | 10/28/2026 4:24:21 PM |
 
 ![Account Enabled Security Event](../screenshots/enable-account-event-viewer.png)
 
-These results confirmed that the employee account was successfully re-enabled and that the administrative action was recorded in the Security log.
+Account reactivation was verified in AD. A separate successful post-reactivation workstation sign-in was not captured.
 
-### Outcome
+---
 
-The account deactivation and reactivation procedures were completed successfully.
+## Exercise 04 — Active Directory Security Group Management
+
+### Scenario
+
+John Smith required membership in the IT department's security group to receive departmental resource permissions.
+
+### Group Configuration
+
+A `Groups` organizational unit was created under `corp.lab.test`.
+
+A new group was configured:
+
+| Attribute           | Value        |
+| ------------------- | ------------ |
+| Name                | `IT-Support` |
+| Organizational Unit | Groups       |
+| Scope               | Global       |
+| Type                | Security     |
+
+![IT Security Group](../screenshots/it-security-group.png)
+
+### Membership Assignment
+
+John Smith (`CORP\jsmith`) was added through the group's **Members** tab in ADUC.
+
+![IT-Support Group Members](../screenshots/add-employee.png)
+
+### Verification
+
+On DC01:
+
+```powershell
+Get-ADPrincipalGroupMembership jsmith | Select-Object Name
+```
+
+The results included `Domain Users` and `IT-Support`.
+
+![Security Group Membership Verification](../screenshots/add-employee-validation.png)
+
+On WIN11-01, John's session token was checked:
+
+```powershell
+whoami /groups
+```
+
+The output included `CORP\IT-Support`, confirming the group membership was present in his Windows logon token.
+
+---
+
+## Exercise 05 — SMB Shared Folder and NTFS Permissions
+
+### Scenario
+
+An IT employee needed read/write access to a departmental network share. A permissions restriction was then introduced to simulate an Access Denied issue.
+
+### Shared Folder and NTFS Configuration
+
+The folder was created on DC01:
+
+```text
+C:\Shares\IT-Shared
+```
+
+NTFS inheritance was disabled, with permissions applying to the folder, subfolders, and files.
+
+| Principal       | NTFS Permission |
+| --------------- | --------------- |
+| SYSTEM          | Full Control    |
+| Administrators  | Full Control    |
+| CORP\IT-Support | Modify          |
+
+![NTFS Folder Permissions](../screenshots/ntfs-folder-permissions.png)
+
+### SMB Share Configuration
+
+The share was created using PowerShell:
+
+```powershell
+New-SmbShare -Name "IT-Shared" `
+    -Path "C:\Shares\IT-Shared" `
+    -ChangeAccess "CORP\IT-Support" `
+    -FullAccess "BUILTIN\Administrators"
+```
+
+Verification:
+
+```powershell
+Get-SmbShareAccess -Name "IT-Shared"
+```
+
+| Principal              | SMB Permission |
+| ---------------------- | -------------- |
+| BUILTIN\Administrators | Full           |
+| CORP\IT-Support        | Change         |
+
+![SMB Share Permissions](../screenshots/smb-share-permissions.png)
+
+The share was accessible at `\\DC01\IT-Shared`.
+
+### Access Verification
+
+On WIN11-01, signed in as `CORP\jsmith`:
+
+```powershell
+Test-NetConnection DC01 -Port 445
+```
+
+```text
+TcpTestSucceeded : True
+```
+
+File read, modification, and deletion were tested:
+
+```powershell
+Get-Content "\\DC01\IT-Shared\test.txt"
+Add-Content "\\DC01\IT-Shared\test.txt" -Value "Modified"
+Get-Content "\\DC01\IT-Shared\test.txt"
+Remove-Item "\\DC01\IT-Shared\test.txt"
+```
+
+The modified file contained:
+
+```text
+FileModified
+```
+
+![Shared Folder Access and Modification](../screenshots/shared-folder-access-and-modification.png)
+
+### Simulating an Access Denied Issue
+
+On DC01, the `CORP\IT-Support` NTFS permission was changed from **Modify** to **Read & Execute**. SMB permissions were not changed.
+
+| Permission Layer | CORP\IT-Support |
+| ---------------- | --------------- |
+| SMB              | Change          |
+| NTFS             | Read & Execute  |
+
+![NTFS Permission Restrictions](../screenshots/smb-permissions-restrictions.png)
+
+On WIN11-01, listing the share succeeded:
+
+```powershell
+Get-ChildItem "\\DC01\IT-Shared\"
+```
+
+Creating a file failed:
+
+```powershell
+Set-Content "\\DC01\IT-Shared\restricted-test.txt" -Value "Testing access"
+```
+
+```text
+Set-Content : Access to the path '\\DC01\IT-Shared\restricted-test.txt' is denied.
+```
+
+The error was classified as `PermissionDenied` / `UnauthorizedAccessException`.
+
+![SMB Restrictions Verification](../screenshots/smb-restrictions-validation.png)
+
+### Root Cause
+
+SMB Change access permitted modifications at the share level, but NTFS Read & Execute restricted write access. Network file operations are constrained by both permission layers.

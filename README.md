@@ -75,16 +75,6 @@ Documents the Windows Server deployment, network architecture, static IP configu
 
 Documents infrastructure incidents, diagnostic procedures, and Windows troubleshooting exercises.
 
-## Key Learning Outcomes
-
-- Understanding the relationship between DHCP, DNS, and Active Directory.
-- Configuring static network addressing for enterprise infrastructure.
-- Deploying and administering Windows virtual machines.
-- Troubleshooting virtualization and storage failures.
-- Understanding thin provisioning and disk reclamation.
-- Using PowerShell for Windows administration and diagnostics.
-- Developing structured troubleshooting and incident documentation practices.
-
 ## Future Improvements
 
 - Deploy additional domain-joined Windows workstations.
