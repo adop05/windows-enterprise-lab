@@ -610,3 +610,148 @@ The error was classified as `PermissionDenied` / `UnauthorizedAccessException`.
 ### Root Cause
 
 SMB Change access permitted modifications at the share level, but NTFS Read & Execute restricted write access. Network file operations are constrained by both permission layers.
+
+---
+
+## Exercise 06 — Group Policy Administration and Troubleshooting
+
+### Scenario
+
+An employee required restricted access to Control Panel and Windows Settings. The objective was to deploy the restriction through Group Policy and troubleshoot a disabled GPO link.
+
+### Configuration
+
+On DC01, a GPO named `Restrict-Control-Panel` was created and linked to the `Employees` OU.
+
+The following setting was enabled in Group Policy Management:
+
+`User Configuration → Policies → Administrative Templates → Control Panel → Prohibit access to Control Panel and PC settings`
+
+![Group Policy Configuration](../screenshots/gpo-configuration.png)
+
+### Verification
+
+On WIN11-01, signed in as `CORP\jsmith`, the user policy was refreshed and inspected:
+
+```powershell
+gpupdate /target:user /force
+gpresult /scope user /r
+```
+
+The update succeeded, and `Restrict-Control-Panel` appeared under **Applied Group Policy Objects**.
+
+![Group Policy Application](../screenshots/gpo-validation.png)
+
+Opening Control Panel produced a Windows restriction message.
+
+![Control Panel Restriction](../screenshots/gpo-validation-2.png)
+
+### Troubleshooting
+
+To simulate a policy application issue, the `Restrict-Control-Panel` GPO link was disabled on the `Employees` OU.
+
+After refreshing user policy, `gpresult` reported:
+
+```text
+Applied Group Policy Objects: N/A
+
+Restrict-Control-Panel
+    Filtering: Disabled (Link)
+```
+
+![Disabled GPO Link Verification](../screenshots/gpo-troubleshoot.png)
+
+### Root Cause
+
+The GPO was not applied because its link to the `Employees` OU was disabled.
+
+Re-enabling the link and refreshing Group Policy is the intended resolution.
+
+---
+
+## Exercise 07 — Active Directory DNS and Authentication Troubleshooting
+
+### Scenario
+
+An employee cannot access domain resources despite having network connectivity. The objective was to diagnose a DNS configuration issue and restore Active Directory connectivity.
+
+### Baseline Verification
+
+On WIN11-01, the network configuration and connectivity to DC01 were checked:
+
+```powershell
+ipconfig /all
+ping 10.0.0.100
+```
+
+The workstation used DNS server `10.0.0.100`, and all four ping requests succeeded.
+
+![DNS Baseline Configuration](../screenshots/dns-baseline.png)
+
+DNS resolution and domain controller discovery were verified:
+
+```powershell
+nslookup dc01.corp.lab.test
+nltest /dsgetdc:corp.lab.test
+```
+
+Both commands succeeded, identifying DC01 at `10.0.0.100`.
+
+![Domain Controller Discovery](../screenshots/dns-baseline-2.png)
+
+### Simulating a DNS Failure
+
+The workstation's DNS server was changed to `1.1.1.1`:
+
+```powershell
+Set-DnsClientServerAddress -InterfaceAlias "Ethernet" -ServerAddresses 1.1.1.1
+ipconfig /flushdns
+```
+
+Connectivity and Active Directory discovery were tested:
+
+```powershell
+ping 10.0.0.100
+nslookup dc01.corp.lab.test
+nslookup -type=SRV _ldap._tcp.dc._msdcs.corp.lab.test
+nltest /dsgetdc:corp.lab.test /force
+```
+
+IP connectivity remained functional, but DNS resolution failed and domain controller discovery returned:
+
+```text
+Status = 1355 0x54b ERROR_NO_SUCH_DOMAIN
+```
+
+![DNS Failure Verification](../screenshots/dns-failure.png)
+
+### Root Cause
+
+WIN11-01 was using public DNS (`1.1.1.1`), which could not resolve the private Active Directory records for `corp.lab.test`.
+
+### Resolution
+
+The workstation's DNS server was restored to DC01:
+
+```powershell
+Set-DnsClientServerAddress -InterfaceAlias "Ethernet" -ServerAddresses 10.0.0.100
+ipconfig /flushdns
+```
+
+DNS and domain discovery were verified:
+
+```powershell
+nslookup dc01.corp.lab.test
+nslookup -type=SRV _ldap._tcp.dc._msdcs.corp.lab.test
+nltest /dsgetdc:corp.lab.test /force
+```
+
+Results:
+
+| Verification                | Result                            |
+| --------------------------- | --------------------------------- |
+| DNS Resolution              | `dc01.corp.lab.test → 10.0.0.100` |
+| LDAP SRV Record             | DC01, port 389                    |
+| Domain Controller Discovery | Successful                        |
+
+![DNS Connectivity Restored](../screenshots/dns-restored.png)
